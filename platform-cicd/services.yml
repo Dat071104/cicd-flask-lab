@@ -1,0 +1,18 @@
+services:
+  - name: vihire-backend
+    git_repository: https://github.com/your-org/vihire-backend.git
+    docker_image_name: your-dockerhub-username/vihire-backend
+    compose_file: compose/vihire-backend.yml
+    deploy_target: vm2
+    deploy_path: /opt/vihire/backend
+    container_port: 5000
+    host_port: 5000
+
+  - name: vihire-frontend
+    git_repository: https://github.com/your-org/vihire-frontend.git
+    docker_image_name: your-dockerhub-username/vihire-frontend
+    compose_file: compose/vihire-frontend.yml
+    deploy_target: vm2
+    deploy_path: /opt/vihire/frontend
+    container_port: 80
+    host_port: 8081
