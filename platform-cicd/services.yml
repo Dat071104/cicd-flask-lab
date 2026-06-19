@@ -2,7 +2,7 @@ services:
   - name: vihire-backend
     git_repository: https://github.com/Dat071104/cicd-flask-lab.git
     docker_image_name: dat071104/vihire-backend
-    compose_file: compose/vihire-backend.yml
+    compose_file: vihire-frontend.yml
     deploy_target: vm2
     deploy_path: /opt/vihire/backend
     container_port: 5000
@@ -11,7 +11,7 @@ services:
   - name: vihire-frontend
     git_repository: https://github.com/Dat071104/cicd-flask-lab.git
     docker_image_name: dat071104/vihire-frontend
-    compose_file: compose/vihire-frontend.yml
+    compose_file: vihire-backend.yml
     deploy_target: vm2
     deploy_path: /opt/vihire/frontend
     container_port: 80
