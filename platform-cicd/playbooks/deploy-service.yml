@@ -1,0 +1,58 @@
+- name: Deploy selected service with Docker Compose
+  hosts: deploy_targets
+  gather_facts: false
+
+  vars:
+    compose_dest: "{{ deploy_path }}/docker-compose.yml"
+    env_dest: "{{ deploy_path }}/.env"
+
+  tasks:
+    - name: Ensure deployment directory exists
+      ansible.builtin.file:
+        path: "{{ deploy_path }}"
+        state: directory
+        owner: "{{ ansible_user | default('jenkins') }}"
+        group: "{{ ansible_user | default('jenkins') }}"
+        mode: "0755"
+
+    - name: Copy Docker Compose template
+      ansible.builtin.copy:
+        src: "../{{ compose_template }}"
+        dest: "{{ compose_dest }}"
+        mode: "0644"
+
+    - name: Write deployment environment file
+      ansible.builtin.copy:
+        dest: "{{ env_dest }}"
+        mode: "0644"
+        content: |
+          SERVICE_NAME={{ service_name }}
+          IMAGE_NAME={{ image_name }}
+          IMAGE_TAG={{ image_tag }}
+          APP_BRANCH={{ app_branch }}
+          BUILD_NUMBER={{ build_number }}
+          HOST_PORT={{ host_port }}
+          CONTAINER_PORT={{ container_port }}
+
+    - name: Pull requested image
+      ansible.builtin.command:
+        cmd: docker compose pull
+        chdir: "{{ deploy_path }}"
+      changed_when: true
+
+    - name: Start service with Docker Compose
+      ansible.builtin.command:
+        cmd: docker compose up -d --remove-orphans
+        chdir: "{{ deploy_path }}"
+      changed_when: true
+
+    - name: Show running compose services
+      ansible.builtin.command:
+        cmd: docker compose ps
+        chdir: "{{ deploy_path }}"
+      register: compose_ps
+      changed_when: false
+
+    - name: Print compose status
+      ansible.builtin.debug:
+        var: compose_ps.stdout_lines

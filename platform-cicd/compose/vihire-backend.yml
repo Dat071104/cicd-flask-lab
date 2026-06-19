@@ -1,0 +1,11 @@
+services:
+  app:
+    image: ${IMAGE_NAME}:${IMAGE_TAG}
+    container_name: ${SERVICE_NAME}
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT}:${CONTAINER_PORT}"
+    environment:
+      APP_BRANCH: ${APP_BRANCH}
+      BUILD_NUMBER: ${BUILD_NUMBER}
+      SERVICE_NAME: ${SERVICE_NAME}
