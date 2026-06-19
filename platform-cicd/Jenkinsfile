@@ -19,7 +19,8 @@ pipeline {
         stage('Load Service Metadata') {
             steps {
                 script {
-                    def catalog = readYaml(file: 'services.yml')
+                    env.PLATFORM_DIR = fileExists('services.yml') ? '.' : 'platform-cicd'
+                    def catalog = readYaml(file: "${env.PLATFORM_DIR}/services.yml")
                     def service = catalog.services.find { it.name == params.SERVICE }
 
                     if (service == null) {
@@ -44,6 +45,7 @@ pipeline {
                     echo "Compose template: ${COMPOSE_FILE}"
                     echo "Deploy target: ${DEPLOY_TARGET}"
                     echo "Deploy path: ${DEPLOY_PATH}"
+                    echo "Platform directory: ${PLATFORM_DIR}"
                 '''
             }
         }
@@ -97,7 +99,7 @@ pipeline {
             steps {
                 sh '''
                     set -eu
-                    ansible-playbook -i inventory/hosts.yml playbooks/deploy-service.yml \
+                    ansible-playbook -i "${PLATFORM_DIR}/inventory/hosts.yml" "${PLATFORM_DIR}/playbooks/deploy-service.yml" \
                       --limit "${DEPLOY_TARGET}" \
                       --extra-vars "service_name=${SERVICE_NAME}" \
                       --extra-vars "image_name=${DOCKER_IMAGE_NAME}" \

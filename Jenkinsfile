@@ -1,18 +1,65 @@
 pipeline {
     agent { label 'docker-agent' }
 
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
     parameters {
+        string(name: 'SERVICE', defaultValue: 'vihire-backend', description: 'Service name from services.yml')
         string(name: 'BRANCH', defaultValue: 'main', description: 'Git branch to build')
     }
 
+    environment {
+        DOCKERHUB_CREDENTIALS_ID = 'dockerhub-creds'
+    }
+
     stages {
-        stage('Checkout') {
+        stage('Load Service Metadata') {
             steps {
-                checkout scmGit(
-                    branches: [[name: "*/${params.BRANCH}"]],
-                    userRemoteConfigs: scm.userRemoteConfigs
-                )
+                script {
+                    env.PLATFORM_DIR = fileExists('services.yml') ? '.' : 'platform-cicd'
+                    def catalog = readYaml(file: "${env.PLATFORM_DIR}/services.yml")
+                    def service = catalog.services.find { it.name == params.SERVICE }
+
+                    if (service == null) {
+                        error "Unknown SERVICE '${params.SERVICE}'. Check services.yml."
+                    }
+
+                    env.SERVICE_NAME = service.name
+                    env.SERVICE_GIT_REPOSITORY = service.git_repository
+                    env.DOCKER_IMAGE_NAME = service.docker_image_name
+                    env.COMPOSE_FILE = service.compose_file
+                    env.DEPLOY_TARGET = service.deploy_target
+                    env.DEPLOY_PATH = service.deploy_path
+                    env.HOST_PORT = service.host_port.toString()
+                    env.CONTAINER_PORT = service.container_port.toString()
+                }
+
                 sh '''
+                    set -eu
+                    echo "Service: ${SERVICE_NAME}"
+                    echo "Repository: ${SERVICE_GIT_REPOSITORY}"
+                    echo "Image: ${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
+                    echo "Compose template: ${COMPOSE_FILE}"
+                    echo "Deploy target: ${DEPLOY_TARGET}"
+                    echo "Deploy path: ${DEPLOY_PATH}"
+                    echo "Platform directory: ${PLATFORM_DIR}"
+                '''
+            }
+        }
+
+        stage('Clone Service Repository') {
+            steps {
+                dir('source') {
+                    deleteDir()
+                    git branch: params.BRANCH, url: env.SERVICE_GIT_REPOSITORY
+                }
+
+                sh '''
+                    set -eu
+                    cd source
                     echo "Branch: ${BRANCH}"
                     echo "Commit: $(git rev-parse --short HEAD)"
                 '''
@@ -21,22 +68,56 @@ pipeline {
 
         stage('Build') {
             steps {
-                sh 'docker build -t cicd-flask-lab:${BUILD_NUMBER} .'
+                sh '''
+                    set -eu
+                    docker build \
+                      --label "org.opencontainers.image.source=${SERVICE_GIT_REPOSITORY}" \
+                      --label "org.opencontainers.image.revision=$(cd source && git rev-parse HEAD)" \
+                      -t "${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}" \
+                      source
+                '''
             }
         }
 
-        stage('Deploy') {
+        stage('Push DockerHub') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: env.DOCKERHUB_CREDENTIALS_ID,
+                    usernameVariable: 'DOCKERHUB_USERNAME',
+                    passwordVariable: 'DOCKERHUB_TOKEN'
+                )]) {
+                    sh '''
+                        set -eu
+                        printf '%s' "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+                        docker push "${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
+                    '''
+                }
+            }
+        }
+
+        stage('Ansible Deploy') {
             steps {
                 sh '''
-                    IMAGE_TAG=${BUILD_NUMBER} \
-                    APP_BRANCH=${BRANCH} \
-                    BUILD_NUMBER=${BUILD_NUMBER} \
-                    docker compose up -d --remove-orphans
-
-                    docker compose ps
-                    curl -f http://localhost:5000/health
+                    set -eu
+                    ansible-playbook -i "${PLATFORM_DIR}/inventory/hosts.yml" "${PLATFORM_DIR}/playbooks/deploy-service.yml" \
+                      --limit "${DEPLOY_TARGET}" \
+                      --extra-vars "service_name=${SERVICE_NAME}" \
+                      --extra-vars "image_name=${DOCKER_IMAGE_NAME}" \
+                      --extra-vars "image_tag=${BUILD_NUMBER}" \
+                      --extra-vars "app_branch=${BRANCH}" \
+                      --extra-vars "build_number=${BUILD_NUMBER}" \
+                      --extra-vars "deploy_path=${DEPLOY_PATH}" \
+                      --extra-vars "compose_template=${COMPOSE_FILE}" \
+                      --extra-vars "host_port=${HOST_PORT}" \
+                      --extra-vars "container_port=${CONTAINER_PORT}"
                 '''
             }
+        }
+    }
+
+    post {
+        always {
+            sh 'docker logout || true'
         }
     }
 }
