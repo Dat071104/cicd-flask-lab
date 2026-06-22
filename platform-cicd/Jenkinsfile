@@ -50,6 +50,39 @@ pipeline {
             }
         }
 
+        stage('Preflight Checks') {
+            steps {
+                sh '''
+                    set -eu
+                    echo "== Starting Preflight Checks =="
+                    
+                    echo "Checking Docker CLI and daemon access..."
+                    docker info >/dev/null
+                    
+                    echo "Checking Docker socket..."
+                    if [ ! -S /var/run/docker.sock ]; then
+                        echo "Error: /var/run/docker.sock does not exist or is not a socket"
+                        exit 1
+                    fi
+                    
+                    echo "Checking reports directory creation..."
+                    mkdir -p reports
+                    touch reports/.preflight_test && rm reports/.preflight_test
+                    
+                    echo "Validating environment variables..."
+                    if [ -z "${DOCKER_IMAGE_NAME:-}" ]; then
+                        echo "Error: DOCKER_IMAGE_NAME is not set or empty"
+                        exit 1
+                    fi
+                    if [ -z "${BUILD_NUMBER:-}" ]; then
+                        echo "Error: BUILD_NUMBER is not set or empty"
+                        exit 1
+                    fi
+                    echo "Preflight checks passed successfully!"
+                '''
+            }
+        }
+
         stage('Clone Service Repository') {
             steps {
                 dir('source') {
@@ -66,6 +99,19 @@ pipeline {
             }
         }
 
+        stage('Dockerfile Lint') {
+            steps {
+                sh '''
+                    set -eu
+                    mkdir -p reports
+                    echo "Running Hadolint on Dockerfile..."
+                    docker run --rm -i hadolint/hadolint < source/Dockerfile > reports/hadolint.txt || true
+                    echo "Hadolint Result:"
+                    cat reports/hadolint.txt
+                '''
+            }
+        }
+
         stage('Build') {
             steps {
                 sh '''
@@ -75,6 +121,55 @@ pipeline {
                       --label "org.opencontainers.image.revision=$(cd source && git rev-parse HEAD)" \
                       -t "${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}" \
                       source
+                '''
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps {
+                sh '''
+                    set -eu
+                    mkdir -p reports
+                    
+                    echo "Running Trivy Scan (HIGH severity, report-only)..."
+                    docker run --rm \
+                      -v /var/run/docker.sock:/var/run/docker.sock \
+                      -v "$WORKSPACE":/workspace \
+                      -w /workspace \
+                      aquasec/trivy image --severity HIGH --format json \
+                      -o reports/trivy-high.json "${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}" || true
+                    
+                    docker run --rm \
+                      -v /var/run/docker.sock:/var/run/docker.sock \
+                      -v "$WORKSPACE":/workspace \
+                      -w /workspace \
+                      aquasec/trivy image --severity HIGH --format table \
+                      -o reports/trivy-high.txt "${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}" || true
+                    
+                    echo "Running Trivy Scan (CRITICAL severity, report-only)..."
+                    docker run --rm \
+                      -v /var/run/docker.sock:/var/run/docker.sock \
+                      -v "$WORKSPACE":/workspace \
+                      -w /workspace \
+                      aquasec/trivy image --severity CRITICAL --format json \
+                      -o reports/trivy-critical.json "${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}" || true
+                    
+                    docker run --rm \
+                      -v /var/run/docker.sock:/var/run/docker.sock \
+                      -v "$WORKSPACE":/workspace \
+                      -w /workspace \
+                      aquasec/trivy image --severity CRITICAL --format table \
+                      -o reports/trivy-critical.txt "${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}" || true
+
+                    echo "Trivy Scan Results (CRITICAL):"
+                    cat reports/trivy-critical.txt || true
+                    
+                    echo "Running Trivy Gate Check (CRITICAL severity, fails pipeline if findings exist)..."
+                    docker run --rm \
+                      -v /var/run/docker.sock:/var/run/docker.sock \
+                      -v "$WORKSPACE":/workspace \
+                      -w /workspace \
+                      aquasec/trivy image --severity CRITICAL --exit-code 1 --no-progress "${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
                 '''
             }
         }
@@ -113,11 +208,25 @@ pipeline {
                 '''
             }
         }
+
+        stage('Verify Deployment') {
+            steps {
+                sh '''
+                    set -eu
+                    mkdir -p reports
+                    echo "Checking container user..."
+                    docker exec ${SERVICE_NAME} id > reports/non-root-proof.txt
+                    echo "Verification Result (non-root proof):"
+                    cat reports/non-root-proof.txt
+                '''
+            }
+        }
     }
 
     post {
         always {
             sh 'docker logout || true'
+            archiveArtifacts artifacts: 'reports/**', allowEmptyArchive: true
         }
     }
 }

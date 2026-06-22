@@ -7,21 +7,20 @@
     compose_remote_file: "{{ deploy_path }}/{{ compose_template }}"
 
   tasks:
-    - name: Ensure deployment directory exists
+    - name: Prepare deployment directories
       file:
-        path: "{{ deploy_path }}"
+        path: "{{ item }}"
         state: directory
         owner: jenkins
         group: jenkins
         mode: "0755"
-
-    - name: Ensure compose directory exists
-      file:
-        path: "{{ deploy_path }}/compose"
-        state: directory
-        owner: jenkins
-        group: jenkins
-        mode: "0755"
+      loop:
+        - "/opt/vihire"
+        - "/opt/vihire/backend"
+        - "/opt/vihire/backend/compose"
+        - "/opt/vihire/frontend"
+        - "/opt/vihire/frontend/compose"
+      become: true
 
     - name: Copy Docker Compose template
       copy:
