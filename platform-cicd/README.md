@@ -142,6 +142,19 @@ bash platform-cicd/scripts/check-platform.sh
 
 The script checks required files, required tools, and Compose template rendering.
 
+## Phase 2 — Semgrep/OpenSemgrep SAST (Report-Only)
+
+Phase 2 adds Static Analysis Security Testing (SAST) using `semgrep/semgrep`.
+
+- Semgrep runs immediately after source code clone and before Docker image build.
+- Scans the cloned source directory using the `semgrep/semgrep` Docker image.
+- Report-only mode: findings do not block the pipeline in Phase 2 while rules are being calibrated.
+- Generates two reports:
+  - `reports/semgrep.txt` — human-readable text output
+  - `reports/semgrep.json` — structured JSON output for automation
+- Reports are archived via the existing `reports/**` artifact archiving pattern.
+- Phase 1 Trivy CRITICAL severity gate still blocks push/deploy until base image CVEs are remediated.
+
 ## Architecture Diagram
 
 See [ARCHITECTURE.md](ARCHITECTURE.md).

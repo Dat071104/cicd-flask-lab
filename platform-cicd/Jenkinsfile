@@ -99,6 +99,39 @@ pipeline {
             }
         }
 
+        stage('Semgrep SAST') {
+            steps {
+                sh '''
+                    set +e
+                    mkdir -p reports
+                    echo "========================================"
+                    echo "  Semgrep SAST Scan (Report-Only Phase 2)"
+                    echo "========================================"
+
+                    echo "Running Semgrep JSON output..."
+                    docker run --rm \
+                      -v "$WORKSPACE":/workspace \
+                      -w /workspace \
+                      semgrep/semgrep \
+                      semgrep scan --config auto --json -o reports/semgrep.json source/ || true
+
+                    echo "Running Semgrep text output..."
+                    docker run --rm \
+                      -v "$WORKSPACE":/workspace \
+                      -w /workspace \
+                      semgrep/semgrep \
+                      semgrep scan --config auto source/ > reports/semgrep.txt 2>&1 || true
+
+                    echo "Semgrep text result:"
+                    cat reports/semgrep.txt
+
+                    echo ""
+                    echo "Semgrep SAST complete. Report-only mode — findings do NOT block pipeline in Phase 2."
+                    echo "Reports: reports/semgrep.json , reports/semgrep.txt"
+                '''
+            }
+        }
+
         stage('Dockerfile Lint') {
             steps {
                 sh '''
