@@ -1,10 +1,10 @@
-FROM python:3.12-slim
+FROM python:3.12-alpine
 
 WORKDIR /app
 
-# Create non-root user
-RUN groupadd -g 1000 appuser && \
-    useradd -r -u 1000 -g appuser appuser
+# Create non-root user (Alpine uses addgroup/adduser)
+RUN addgroup -g 1000 appuser && \
+    adduser -u 1000 -G appuser -D -h /app appuser
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

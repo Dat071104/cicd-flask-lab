@@ -150,6 +150,7 @@ pipeline {
                 sh '''
                     set -eu
                     docker build \
+                      --pull \
                       --label "org.opencontainers.image.source=${SERVICE_GIT_REPOSITORY}" \
                       --label "org.opencontainers.image.revision=$(cd source && git rev-parse HEAD)" \
                       -t "${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}" \
