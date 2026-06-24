@@ -117,6 +117,7 @@ Phase 2 adds Static Analysis Security Testing (SAST) using `semgrep/semgrep`.
 - Semgrep runs immediately after source code clone and before Docker image build.
 - Scans the cloned source directory using `semgrep/semgrep` Docker image.
 - Report-only mode: findings do not block the pipeline in Phase 2 while rules are being calibrated.
+- **Phase 3C baseline governance**: known Semgrep findings are documented in [`docs/security/semgrep-baseline-governance.md`](docs/security/semgrep-baseline-governance.md).
 - Generates two reports:
   - `reports/semgrep.txt` — human-readable text output
   - `reports/semgrep.json` — structured JSON output for automation
