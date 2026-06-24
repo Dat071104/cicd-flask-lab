@@ -163,13 +163,15 @@ pipeline {
             steps {
                 sh '''
                     set -eu
-                    mkdir -p reports
+                    mkdir -p reports /tmp/trivy-cache
+                    TRIVY_CACHE="-v /tmp/trivy-cache:/root/.cache/trivy --cache-dir /root/.cache/trivy"
                     
                     echo "Running Trivy Scan (HIGH severity, report-only)..."
                     docker run --rm \
                       -v /var/run/docker.sock:/var/run/docker.sock \
                       -v "$WORKSPACE":/workspace \
                       -w /workspace \
+                      ${TRIVY_CACHE} \
                       aquasec/trivy image --severity HIGH --format json \
                       -o reports/trivy-high.json "${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}" || true
                     
@@ -177,6 +179,7 @@ pipeline {
                       -v /var/run/docker.sock:/var/run/docker.sock \
                       -v "$WORKSPACE":/workspace \
                       -w /workspace \
+                      ${TRIVY_CACHE} \
                       aquasec/trivy image --severity HIGH --format table \
                       -o reports/trivy-high.txt "${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}" || true
                     
@@ -185,6 +188,7 @@ pipeline {
                       -v /var/run/docker.sock:/var/run/docker.sock \
                       -v "$WORKSPACE":/workspace \
                       -w /workspace \
+                      ${TRIVY_CACHE} \
                       aquasec/trivy image --severity CRITICAL --format json \
                       -o reports/trivy-critical.json "${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}" || true
                     
@@ -192,6 +196,7 @@ pipeline {
                       -v /var/run/docker.sock:/var/run/docker.sock \
                       -v "$WORKSPACE":/workspace \
                       -w /workspace \
+                      ${TRIVY_CACHE} \
                       aquasec/trivy image --severity CRITICAL --format table \
                       -o reports/trivy-critical.txt "${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}" || true
 
@@ -203,6 +208,7 @@ pipeline {
                       -v /var/run/docker.sock:/var/run/docker.sock \
                       -v "$WORKSPACE":/workspace \
                       -w /workspace \
+                      ${TRIVY_CACHE} \
                       aquasec/trivy image --severity CRITICAL --exit-code 1 --no-progress "${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
                 '''
             }
