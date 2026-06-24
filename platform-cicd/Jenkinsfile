@@ -351,29 +351,9 @@ PYEOF
                             echo ""
                             echo "Semgrep Gate: REPORT-ONLY - JSON parsing unreliable. See reports/semgrep-gate.txt"
                         else
-                            # exit 0: check if only baseline findings existed
-                            python3 << 'PYEOF'
-import json
-
-with open('reports/semgrep.json') as f:
-    data = json.load(f)
-results = data.get('results', [])
-baseline_ids = {"dockerfile.security.missing-user.missing-user", "python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host"}
-new_ids = set()
-for r in results:
-    cid = r.get('check_id', 'unknown')
-    if cid not in baseline_ids:
-        new_ids.add(cid)
-if new_ids:
-    print("ACTIVE")
-else:
-    print("REPORT-ONLY")
-PYEOF
-                            SEMG_GATE_MODE=$(cat reports/new_semgrep_gate_status.txt 2>/dev/null || echo "ACTIVE")
-
-                            # Write semgrep-gate.txt with appropriate mode
-                            python3 << 'PYEOF'
-import json
+                            # exit 0: single Python script to write gate file and print mode
+                            SEMG_GATE_MODE=$(python3 << 'PYEOF'
+import json, sys
 
 with open('reports/semgrep.json') as f:
     data = json.load(f)
@@ -385,15 +365,20 @@ for r in results:
     if cid not in baseline_ids:
         new_ids.add(cid)
 
-lines = []
 if new_ids:
-    lines.append("GATE: PASSED - No blocking security findings in non-baseline results")
-    lines.append("Status: PASSED")
-    lines.append("Mode: ACTIVE")
+    mode = "ACTIVE"
+    lines = [
+        "GATE: PASSED - No blocking security findings in non-baseline results",
+        "Status: PASSED",
+        "Mode: ACTIVE",
+    ]
 else:
-    lines.append("GATE: PASSED - Only baseline findings detected (report-only/manual-triage)")
-    lines.append("Status: PASSED (baseline findings only)")
-    lines.append("Mode: REPORT-ONLY (baseline findings accepted as manual triage)")
+    mode = "REPORT-ONLY"
+    lines = [
+        "GATE: PASSED - Only baseline findings detected (report-only/manual-triage)",
+        "Status: PASSED (baseline findings only)",
+        "Mode: REPORT-ONLY (baseline findings accepted as manual triage)",
+    ]
 
 lines.append("")
 lines.append("Known baseline findings (report-only):")
@@ -404,8 +389,11 @@ lines.append("If a new security finding appears in ERROR/CRITICAL severity,")
 lines.append("this gate will block the pipeline.")
 
 with open('reports/semgrep-gate.txt', 'w') as f:
-    f.write('\n'.join(lines))
+    f.write("\n".join(lines))
+
+print(mode)
 PYEOF
+)
                             echo ""
                             echo "Semgrep Gate: PASSED - $SEMG_GATE_MODE"
                         fi
