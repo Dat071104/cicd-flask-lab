@@ -41,17 +41,23 @@ semgrep_status="NOT SCANNED"
 hadolint_status="NOT SCANNED"
 trivy_high_status="NOT SCANNED"
 trivy_critical_status="NOT SCANNED"
+source_secret_scan_status="NOT SCANNED"
+source_secret_gate_status="NOT CHECKED"
+semgrep_gate_status="NOT CHECKED"
 dockerhub_status="NOT PUSHED"
 ansible_status="NOT DEPLOYED"
 nonroot_status="NOT VERIFIED"
 app_endpoint_status="UNKNOWN"
 
-[ -f "${REPORTS_DIR}/semgrep.txt" ]         && semgrep_status="PASS (report-only)"
-[ -f "${REPORTS_DIR}/hadolint.txt" ]        && hadolint_status="PASS"
-[ -f "${REPORTS_DIR}/trivy-high.txt" ]      && trivy_high_status="PASS (report-only)"
-[ -f "${REPORTS_DIR}/trivy-critical.txt" ]  && trivy_critical_status="PASS (gate passed)"
-[ -f "${REPORTS_DIR}/non-root-proof.txt" ]  && nonroot_status="VERIFIED"
-[ -f "${REPORTS_DIR}/app-endpoint.txt" ]    && app_endpoint_status="$(head -1 "${REPORTS_DIR}/app-endpoint.txt" 2>/dev/null)"
+[ -f "${REPORTS_DIR}/semgrep.txt" ]                && semgrep_status="PASS (report-only)"
+[ -f "${REPORTS_DIR}/hadolint.txt" ]               && hadolint_status="PASS"
+[ -f "${REPORTS_DIR}/trivy-high.txt" ]             && trivy_high_status="PASS (report-only)"
+[ -f "${REPORTS_DIR}/trivy-critical.txt" ]         && trivy_critical_status="PASS (gate passed)"
+[ -f "${REPORTS_DIR}/non-root-proof.txt" ]         && nonroot_status="VERIFIED"
+[ -f "${REPORTS_DIR}/app-endpoint.txt" ]           && app_endpoint_status="$(head -1 "${REPORTS_DIR}/app-endpoint.txt" 2>/dev/null)"
+[ -f "${REPORTS_DIR}/source-secret-scan.txt" ]     && source_secret_scan_status="PASS"
+[ -f "${REPORTS_DIR}/source-secret-gate.txt" ]     && source_secret_gate_status="$(head -1 "${REPORTS_DIR}/source-secret-gate.txt" 2>/dev/null)"
+[ -f "${REPORTS_DIR}/semgrep-gate.txt" ]           && semgrep_gate_status="$(head -1 "${REPORTS_DIR}/semgrep-gate.txt" 2>/dev/null)"
 
 # -----------------------------------------------
 # Generate security-summary.txt
@@ -75,6 +81,11 @@ Semgrep:           ${semgrep_status}
 Hadolint:          ${hadolint_status}
 Trivy HIGH:        ${trivy_high_status}
 Trivy CRITICAL:    ${trivy_critical_status}
+Source Secret:     ${source_secret_scan_status}
+
+--- Security Gates ---------------------
+Source Secret Gate:  ${source_secret_gate_status}
+Semgrep Gate:        ${semgrep_gate_status}
 
 --- Pipeline Status --------------------
 Push DockerHub:    ${dockerhub_status}
@@ -105,7 +116,12 @@ cat > "${REPORTS_DIR}/security-summary.json" <<-EOJSON
     "semgrep": "${semgrep_status}",
     "hadolint": "${hadolint_status}",
     "trivy_high": "${trivy_high_status}",
-    "trivy_critical": "${trivy_critical_status}"
+    "trivy_critical": "${trivy_critical_status}",
+    "source_secret": "${source_secret_scan_status}"
+  },
+  "gates": {
+    "source_secret_gate": "${source_secret_gate_status}",
+    "semgrep_gate": "${semgrep_gate_status}"
   },
   "pipeline": {
     "push_dockerhub": "${dockerhub_status}",

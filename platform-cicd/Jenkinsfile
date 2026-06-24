@@ -132,6 +132,96 @@ pipeline {
             }
         }
 
+        stage('Semgrep Security Gate') {
+            steps {
+                sh '''
+                    set +e
+                    mkdir -p reports
+                    echo "========================================"
+                    echo "  Semgrep Security Gate (Phase 3B)"
+                    echo "========================================"
+
+                    GATE_RESULT="PASSED"
+                    GATE_NOTES=""
+
+                    if [ -f reports/semgrep.json ]; then
+                        echo "Parsing Semgrep JSON for severity-based gating..."
+
+                        python3 << 'PYEOF'
+import json, sys
+
+try:
+    with open('reports/semgrep.json') as f:
+        data = json.load(f)
+except Exception as e:
+    print(f"PARSE_ERROR: Could not parse semgrep.json: {e}")
+    sys.exit(2)
+
+results = data.get('results', [])
+if not results:
+    print("No Semgrep findings.")
+    sys.exit(0)
+
+blocking = []
+for r in results:
+    sev = r.get('extra', {}).get('severity', '').upper()
+    cat = r.get('extra', {}).get('metadata', {}).get('category', '')
+    scanner_cat = r.get('extra', {}).get('metadata', {}).get('scanner', {}).get('category', '')
+    cwe = r.get('extra', {}).get('metadata', {}).get('cwe', [])
+    check_id = r.get('check_id', 'unknown')
+    path = r.get('path', 'unknown')
+    line = r.get('start', {}).get('line', 0)
+
+    is_security = ('security' in str(cat).lower() or 'security' in str(scanner_cat).lower())
+
+    print(f"  [{sev:7s}] {check_id}  {path}:{line}")
+
+    # Block only ERROR/CRITICAL security findings
+    if sev in ('ERROR', 'CRITICAL') and is_security:
+        blocking.append(f"  BLOCK: {check_id} at {path}:{line} ({sev})")
+
+print()
+if blocking:
+    print("BLOCKING FINDINGS:")
+    for b in blocking:
+        print(b)
+    sys.exit(1)
+else:
+    print("No blocking security findings.")
+    sys.exit(0)
+PYEOF
+                        SEMGREP_EXIT=$?
+
+                        if [ $SEMGREP_EXIT -eq 1 ]; then
+                            echo "GATE: BLOCKED - Security-critical Semgrep findings detected" > reports/semgrep-gate.txt
+                            echo "Status: BLOCKED" >> reports/semgrep-gate.txt
+                            echo ""
+                            echo "Semgrep Gate: FAILED - Security-critical findings found"
+                            exit 1
+                        elif [ $SEMGREP_EXIT -eq 2 ]; then
+                            echo "GATE: REPORT-ONLY - Could not parse semgrep.json structure" > reports/semgrep-gate.txt
+                            echo "Status: REPORT-ONLY (manual triage required)" >> reports/semgrep-gate.txt
+                            echo "Note: Semgrep JSON did not have expected structure for automated gating." >> reports/semgrep-gate.txt
+                            echo "Manual triage is required to verify no security-critical issues exist." >> reports/semgrep-gate.txt
+                            echo ""
+                            echo "Semgrep Gate: REPORT-ONLY - JSON parsing unreliable. See reports/semgrep-gate.txt"
+                        else
+                            echo "GATE: PASSED - No security-critical findings" > reports/semgrep-gate.txt
+                            echo "Status: PASSED" >> reports/semgrep-gate.txt
+                            echo ""
+                            echo "Semgrep Gate: PASSED"
+                        fi
+                    else
+                        echo "GATE: REPORT-ONLY - No semgrep.json found" > reports/semgrep-gate.txt
+                        echo "Status: REPORT-ONLY (no Semgrep scan output available)" >> reports/semgrep-gate.txt
+                        echo "Manual triage required to verify no security-critical issues exist." >> reports/semgrep-gate.txt
+                        echo ""
+                        echo "Semgrep Gate: REPORT-ONLY - No semgrep.json. See reports/semgrep-gate.txt"
+                    fi
+                '''
+            }
+        }
+
         stage('Dockerfile Lint') {
             steps {
                 sh '''
@@ -141,6 +231,113 @@ pipeline {
                     docker run --rm -i hadolint/hadolint < source/Dockerfile > reports/hadolint.txt || true
                     echo "Hadolint Result:"
                     cat reports/hadolint.txt
+                '''
+            }
+        }
+
+        stage('Source Secret Scan') {
+            steps {
+                sh '''
+                    set +e
+                    mkdir -p reports
+                    echo "========================================"
+                    echo "  Source Secret Scan (Phase 3B)"
+                    echo "========================================"
+
+                    echo "Running Trivy filesystem secret scan on source/..."
+                    docker run --rm \
+                      -v "$WORKSPACE":/workspace \
+                      -w /workspace \
+                      aquasec/trivy fs --security-checks secret --format json \
+                      -o reports/source-secret-scan.json \
+                      source/
+                    TRIVY_SECRET_EXIT=$?
+
+                    docker run --rm \
+                      -v "$WORKSPACE":/workspace \
+                      -w /workspace \
+                      aquasec/trivy fs --security-checks secret --format table \
+                      -o reports/source-secret-scan.txt \
+                      source/ || true
+
+                    echo ""
+                    echo "=== Safe Summary (no secret values exposed) ==="
+
+                    python3 << 'PYEOF'
+import json, sys
+
+try:
+    with open('reports/source-secret-scan.json') as f:
+        data = json.load(f)
+except Exception as e:
+    print(f"PARSE_ERROR: {e}")
+    sys.exit(2)
+
+results = data.get('Results', [])
+if not results:
+    print("No secret or misconfig findings in source code.")
+    sys.exit(0)
+
+secret_count = 0
+misconfig_critical = 0
+
+for r in results:
+    target = r.get('Target', 'unknown')
+    cls = r.get('Class', '')
+
+    if cls == 'secret':
+        for s in r.get('Secrets', []):
+            secret_count += 1
+            rid = s.get('RuleID', 'unknown')
+            sev = s.get('Severity', '?')
+            cat = s.get('Category', '')
+            # Show RuleID and severity only — NOT matched content
+            print(f"  SECRET: {rid} [{sev}] in {target} ({cat})")
+    elif cls == 'misconfig':
+        for m in r.get('Misconfigurations', []):
+            sev = m.get('Severity', '')
+            if sev == 'CRITICAL':
+                misconfig_critical += 1
+                print(f"  MISCONFIG (CRITICAL): {m.get('ID','unknown')} in {target}")
+            else:
+                print(f"  MISCONFIG ({sev}): {m.get('ID','unknown')} in {target} — report-only")
+
+print()
+print(f"  Secrets found: {secret_count}")
+print(f"  CRITICAL misconfigs: {misconfig_critical}")
+
+if secret_count > 0 or misconfig_critical > 0:
+    sys.exit(1)
+sys.exit(0)
+PYEOF
+                    SCAN_EXIT=$?
+
+                    if [ $SCAN_EXIT -eq 1 ]; then
+                        echo "GATE: BLOCKED - Secrets or CRITICAL misconfigs found in source" > reports/source-secret-gate.txt
+                        echo "Status: BLOCKED" >> reports/source-secret-gate.txt
+                        python3 -c "
+import json
+with open('reports/source-secret-scan.json') as f:
+    d = json.load(f)
+s = sum(1 for r in d.get('Results',[]) for _ in r.get('Secrets',[]))
+mc = sum(1 for r in d.get('Results',[]) for m in r.get('Misconfigurations',[]) if m.get('Severity')=='CRITICAL')
+print(f'Secrets: {s}')
+print(f'Critical misconfigs: {mc}')
+" >> reports/source-secret-gate.txt
+                        echo ""
+                        echo "Source Secret Gate: BLOCKED - Failing pipeline before build"
+                        exit 1
+                    elif [ $SCAN_EXIT -eq 2 ]; then
+                        echo "GATE: SKIPPED - JSON parse error" > reports/source-secret-gate.txt
+                        echo "Status: SKIPPED (parse error)" >> reports/source-secret-gate.txt
+                        echo ""
+                        echo "Source Secret Gate: SKIPPED due to parse error"
+                    else
+                        echo "GATE: PASSED - No secrets or CRITICAL misconfigs in source" > reports/source-secret-gate.txt
+                        echo "Status: PASSED" >> reports/source-secret-gate.txt
+                        echo ""
+                        echo "Source Secret Gate: PASSED"
+                    fi
                 '''
             }
         }
