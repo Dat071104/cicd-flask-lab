@@ -255,6 +255,25 @@ pipeline {
                 '''
             }
         }
+
+        stage('Phase 3A: Security Summary & Notification Skeleton') {
+            steps {
+                script {
+                    env.BUILD_URL_CLEAN = env.BUILD_URL ?: "https://jenkins.example.com/job/${env.JOB_NAME}/${env.BUILD_NUMBER}/"
+                }
+                sh '''
+                    set -eu
+                    PLATFORM_DIR="${PLATFORM_DIR:-platform-cicd}"
+                    bash "${PLATFORM_DIR}/scripts/security_notify.sh" \
+                        "${JOB_NAME}" \
+                        "${BUILD_NUMBER}" \
+                        "${SERVICE_NAME}" \
+                        "${BRANCH}" \
+                        "${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
+                    echo "Security summary and notification status generated."
+                '''
+            }
+        }
     }
 
     post {
