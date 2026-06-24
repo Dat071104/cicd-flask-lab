@@ -539,10 +539,46 @@ PYEOF
             }
         }
 
-        stage('Phase 3A: Security Summary & Notification Skeleton') {
+        stage('Phase 3D: Security Summary & Notifications') {
             steps {
                 script {
                     env.BUILD_URL_CLEAN = env.BUILD_URL ?: "https://jenkins.example.com/job/${env.JOB_NAME}/${env.BUILD_NUMBER}/"
+
+                    // Set defaults (empty) so the script skips safely when credentials
+                    // have not been created in Jenkins yet.
+                    env.TELEGRAM_BOT_TOKEN = ''
+                    env.TELEGRAM_CHAT_ID = ''
+                    env.SLACK_WEBHOOK_URL = ''
+
+                    // Attempt to load Telegram bot token (optional)
+                    try {
+                        withCredentials([string(credentialsId: 'telegram-bot-token', variable: 'TBOT')]) {
+                            env.TELEGRAM_BOT_TOKEN = TBOT
+                            echo "[CRED] telegram-bot-token loaded successfully."
+                        }
+                    } catch(e) {
+                        echo "[CRED] telegram-bot-token not configured — will skip Telegram."
+                    }
+
+                    // Attempt to load Telegram chat ID (optional)
+                    try {
+                        withCredentials([string(credentialsId: 'telegram-chat-id', variable: 'TCID')]) {
+                            env.TELEGRAM_CHAT_ID = TCID
+                            echo "[CRED] telegram-chat-id loaded successfully."
+                        }
+                    } catch(e) {
+                        echo "[CRED] telegram-chat-id not configured — will skip Telegram."
+                    }
+
+                    // Attempt to load Slack webhook URL (optional)
+                    try {
+                        withCredentials([string(credentialsId: 'slack-webhook-url', variable: 'SWEB')]) {
+                            env.SLACK_WEBHOOK_URL = SWEB
+                            echo "[CRED] slack-webhook-url loaded successfully."
+                        }
+                    } catch(e) {
+                        echo "[CRED] slack-webhook-url not configured — will skip Slack."
+                    }
                 }
                 sh '''
                     set -eu
@@ -553,7 +589,7 @@ PYEOF
                         "${SERVICE_NAME}" \
                         "${BRANCH}" \
                         "${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
-                    echo "Security summary and notification status generated."
+                    echo "Security summary, notification preview, and notification send complete."
                 '''
             }
         }
@@ -563,6 +599,7 @@ PYEOF
         always {
             sh 'docker logout || true'
             archiveArtifacts artifacts: 'reports/**', allowEmptyArchive: true
+            echo "Artifacts archived: reports/** (including notification-preview.txt)"
         }
     }
 }
