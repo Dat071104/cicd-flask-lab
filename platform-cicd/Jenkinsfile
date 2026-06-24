@@ -351,7 +351,7 @@ PYEOF
                             echo ""
                             echo "Semgrep Gate: REPORT-ONLY - JSON parsing unreliable. See reports/semgrep-gate.txt"
                         else
-                            # exit 0: single Python script to write gate file and print mode
+                            # exit 0: write gate file and print mode - use chr(10) to avoid escape issues
                             SEMG_GATE_MODE=$(python3 << 'PYEOF'
 import json, sys
 
@@ -389,7 +389,7 @@ lines.append("If a new security finding appears in ERROR/CRITICAL severity,")
 lines.append("this gate will block the pipeline.")
 
 with open('reports/semgrep-gate.txt', 'w') as f:
-    f.write("\n".join(lines))
+    f.write(chr(10).join(lines))
 
 print(mode)
 PYEOF
