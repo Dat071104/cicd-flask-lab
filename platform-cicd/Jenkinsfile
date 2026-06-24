@@ -164,7 +164,7 @@ pipeline {
                 sh '''
                     set -eu
                     mkdir -p reports /tmp/trivy-cache
-                    TRIVY_CACHE="-v /tmp/trivy-cache:/root/.cache/trivy --cache-dir /root/.cache/trivy"
+                    TRIVY_CACHE="-v /tmp/trivy-cache:/root/.cache/trivy"
                     
                     echo "Running Trivy Scan (HIGH severity, report-only)..."
                     docker run --rm \
