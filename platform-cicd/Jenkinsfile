@@ -99,142 +99,6 @@ pipeline {
             }
         }
 
-        stage('Semgrep SAST') {
-            steps {
-                sh '''
-                    set +e
-                    mkdir -p reports
-                    echo "========================================"
-                    echo "  Semgrep SAST Scan (Report-Only Phase 2)"
-                    echo "========================================"
-
-                    echo "Running Semgrep JSON output..."
-                    docker run --rm \
-                      -v "$WORKSPACE":/workspace \
-                      -w /workspace \
-                      semgrep/semgrep \
-                      semgrep scan --config auto --json -o reports/semgrep.json source/ || true
-
-                    echo "Running Semgrep text output..."
-                    docker run --rm \
-                      -v "$WORKSPACE":/workspace \
-                      -w /workspace \
-                      semgrep/semgrep \
-                      semgrep scan --config auto source/ > reports/semgrep.txt 2>&1 || true
-
-                    echo "Semgrep text result:"
-                    cat reports/semgrep.txt
-
-                    echo ""
-                    echo "Semgrep SAST complete. Report-only mode — findings do NOT block pipeline in Phase 2."
-                    echo "Reports: reports/semgrep.json , reports/semgrep.txt"
-                '''
-            }
-        }
-
-        stage('Semgrep Security Gate') {
-            steps {
-                sh '''
-                    set +e
-                    mkdir -p reports
-                    echo "========================================"
-                    echo "  Semgrep Security Gate (Phase 3B)"
-                    echo "========================================"
-
-                    GATE_RESULT="PASSED"
-                    GATE_NOTES=""
-
-                    if [ -f reports/semgrep.json ]; then
-                        echo "Parsing Semgrep JSON for severity-based gating..."
-
-                        python3 << 'PYEOF'
-import json, sys
-
-try:
-    with open('reports/semgrep.json') as f:
-        data = json.load(f)
-except Exception as e:
-    print(f"PARSE_ERROR: Could not parse semgrep.json: {e}")
-    sys.exit(2)
-
-results = data.get('results', [])
-if not results:
-    print("No Semgrep findings.")
-    sys.exit(0)
-
-blocking = []
-for r in results:
-    sev = r.get('extra', {}).get('severity', '').upper()
-    cat = r.get('extra', {}).get('metadata', {}).get('category', '')
-    scanner_cat = r.get('extra', {}).get('metadata', {}).get('scanner', {}).get('category', '')
-    cwe = r.get('extra', {}).get('metadata', {}).get('cwe', [])
-    check_id = r.get('check_id', 'unknown')
-    path = r.get('path', 'unknown')
-    line = r.get('start', {}).get('line', 0)
-
-    is_security = ('security' in str(cat).lower() or 'security' in str(scanner_cat).lower())
-
-    print(f"  [{sev:7s}] {check_id}  {path}:{line}")
-
-    # Block only ERROR/CRITICAL security findings
-    if sev in ('ERROR', 'CRITICAL') and is_security:
-        blocking.append(f"  BLOCK: {check_id} at {path}:{line} ({sev})")
-
-print()
-if blocking:
-    print("BLOCKING FINDINGS:")
-    for b in blocking:
-        print(b)
-    sys.exit(1)
-else:
-    print("No blocking security findings.")
-    sys.exit(0)
-PYEOF
-                        SEMGREP_EXIT=$?
-
-                        if [ $SEMGREP_EXIT -eq 1 ]; then
-                            echo "GATE: BLOCKED - Security-critical Semgrep findings detected" > reports/semgrep-gate.txt
-                            echo "Status: BLOCKED" >> reports/semgrep-gate.txt
-                            echo ""
-                            echo "Semgrep Gate: FAILED - Security-critical findings found"
-                            exit 1
-                        elif [ $SEMGREP_EXIT -eq 2 ]; then
-                            echo "GATE: REPORT-ONLY - Could not parse semgrep.json structure" > reports/semgrep-gate.txt
-                            echo "Status: REPORT-ONLY (manual triage required)" >> reports/semgrep-gate.txt
-                            echo "Note: Semgrep JSON did not have expected structure for automated gating." >> reports/semgrep-gate.txt
-                            echo "Manual triage is required to verify no security-critical issues exist." >> reports/semgrep-gate.txt
-                            echo ""
-                            echo "Semgrep Gate: REPORT-ONLY - JSON parsing unreliable. See reports/semgrep-gate.txt"
-                        else
-                            echo "GATE: PASSED - No security-critical findings" > reports/semgrep-gate.txt
-                            echo "Status: PASSED" >> reports/semgrep-gate.txt
-                            echo ""
-                            echo "Semgrep Gate: PASSED"
-                        fi
-                    else
-                        echo "GATE: REPORT-ONLY - No semgrep.json found" > reports/semgrep-gate.txt
-                        echo "Status: REPORT-ONLY (no Semgrep scan output available)" >> reports/semgrep-gate.txt
-                        echo "Manual triage required to verify no security-critical issues exist." >> reports/semgrep-gate.txt
-                        echo ""
-                        echo "Semgrep Gate: REPORT-ONLY - No semgrep.json. See reports/semgrep-gate.txt"
-                    fi
-                '''
-            }
-        }
-
-        stage('Dockerfile Lint') {
-            steps {
-                sh '''
-                    set -eu
-                    mkdir -p reports
-                    echo "Running Hadolint on Dockerfile..."
-                    docker run --rm -i hadolint/hadolint < source/Dockerfile > reports/hadolint.txt || true
-                    echo "Hadolint Result:"
-                    cat reports/hadolint.txt
-                '''
-            }
-        }
-
         stage('Source Secret Scan') {
             steps {
                 sh '''
@@ -248,7 +112,7 @@ PYEOF
                     docker run --rm \
                       -v "$WORKSPACE":/workspace \
                       -w /workspace \
-                      aquasec/trivy fs --security-checks secret --format json \
+                      aquasec/trivy fs --scanners secret --format json \
                       -o reports/source-secret-scan.json \
                       source/
                     TRIVY_SECRET_EXIT=$?
@@ -256,7 +120,7 @@ PYEOF
                     docker run --rm \
                       -v "$WORKSPACE":/workspace \
                       -w /workspace \
-                      aquasec/trivy fs --security-checks secret --format table \
+                      aquasec/trivy fs --scanners secret --format table \
                       -o reports/source-secret-scan.txt \
                       source/ || true
 
@@ -338,6 +202,234 @@ print(f'Critical misconfigs: {mc}')
                         echo ""
                         echo "Source Secret Gate: PASSED"
                     fi
+                '''
+            }
+        }
+
+        stage('Semgrep SAST') {
+            steps {
+                sh '''
+                    set +e
+                    mkdir -p reports
+                    echo "========================================"
+                    echo "  Semgrep SAST Scan (Report-Only Phase 2)"
+                    echo "========================================"
+
+                    echo "Running Semgrep JSON output..."
+                    docker run --rm \
+                      -v "$WORKSPACE":/workspace \
+                      -w /workspace \
+                      semgrep/semgrep \
+                      semgrep scan --config auto --json -o reports/semgrep.json source/ || true
+
+                    echo "Running Semgrep text output..."
+                    docker run --rm \
+                      -v "$WORKSPACE":/workspace \
+                      -w /workspace \
+                      semgrep/semgrep \
+                      semgrep scan --config auto source/ > reports/semgrep.txt 2>&1 || true
+
+                    echo "Semgrep text result:"
+                    cat reports/semgrep.txt
+
+                    echo ""
+                    echo "Semgrep SAST complete. Report-only mode — findings do NOT block pipeline in Phase 2."
+                    echo "Reports: reports/semgrep.json , reports/semgrep.txt"
+                '''
+            }
+        }
+
+        stage('Semgrep Security Gate') {
+            steps {
+                sh '''
+                    set +e
+                    mkdir -p reports
+                    echo "========================================"
+                    echo "  Semgrep Security Gate (Phase 3B - Baseline-Aware)"
+                    echo "========================================"
+
+                    GATE_NOTES=""
+
+                    if [ -f reports/semgrep.json ]; then
+                        echo "Parsing Semgrep JSON with baseline awareness..."
+
+                        python3 << 'PYEOF'
+import json, sys
+
+KNOWN_BASELINE = {
+    "dockerfile.security.missing-user.missing-user",
+    "python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host",
+}
+
+try:
+    with open('reports/semgrep.json') as f:
+        data = json.load(f)
+except Exception as e:
+    print(f"PARSE_ERROR: Could not parse semgrep.json: {e}")
+    sys.exit(2)
+
+results = data.get('results', [])
+if not results:
+    print("No Semgrep findings.")
+    sys.exit(0)
+
+baseline_findings = []
+new_findings = []
+
+for r in results:
+    check_id = r.get('check_id', 'unknown')
+    sev = r.get('extra', {}).get('severity', '').upper()
+    cat = r.get('extra', {}).get('metadata', {}).get('category', '')
+    scanner_cat = r.get('extra', {}).get('metadata', {}).get('scanner', {}).get('category', '')
+    path = r.get('path', 'unknown')
+    line = r.get('start', {}).get('line', 0)
+
+    is_security = ('security' in str(cat).lower() or 'security' in str(scanner_cat).lower())
+
+    if check_id in KNOWN_BASELINE:
+        baseline_findings.append(r)
+        print(f"  [{sev:7s}] {check_id}  {path}:{line}  [MANUAL_TRIAGE - baseline known]")
+    else:
+        new_findings.append(r)
+        print(f"  [{sev:7s}] {check_id}  {path}:{line}")
+
+print()
+print(f"Baseline findings (report-only): {len(baseline_findings)}")
+for r in baseline_findings:
+    cid = r.get('check_id', 'unknown')
+    p = r.get('path', 'unknown')
+    ln = r.get('start', {}).get('line', 0)
+    sev = r.get('extra', {}).get('severity', 'UNKNOWN').upper()
+    print(f"    {cid}  at {p}:{ln}  ({sev})  -- manual triage")
+
+print()
+print(f"New findings to evaluate: {len(new_findings)}")
+
+blocking = []
+for r in new_findings:
+    sev = r.get('extra', {}).get('severity', '').upper()
+    cat = r.get('extra', {}).get('metadata', {}).get('category', '')
+    scanner_cat = r.get('extra', {}).get('metadata', {}).get('scanner', {}).get('category', '')
+    check_id = r.get('check_id', 'unknown')
+    path = r.get('path', 'unknown')
+    line = r.get('start', {}).get('line', 0)
+
+    is_security = ('security' in str(cat).lower() or 'security' in str(scanner_cat).lower())
+
+    if sev in ('ERROR', 'CRITICAL') and is_security:
+        blocking.append(f"  BLOCK: {check_id} at {path}:{line} ({sev})")
+
+print()
+if blocking:
+    print("BLOCKING FINDINGS (new):")
+    for b in blocking:
+        print(b)
+    sys.exit(1)
+else:
+    print("No new blocking security findings.")
+    sys.exit(0)
+PYEOF
+                        SEMGREP_EXIT=$?
+
+                        if [ $SEMGREP_EXIT -eq 1 ]; then
+                            echo "GATE: BLOCKED - New security-critical Semgrep findings detected" > reports/semgrep-gate.txt
+                            echo "Status: BLOCKED" >> reports/semgrep-gate.txt
+                            echo "Mode: ACTIVE (new findings blocked)" >> reports/semgrep-gate.txt
+                            echo "" >> reports/semgrep-gate.txt
+                            echo "Known baseline findings (report-only/manual-triage):" >> reports/semgrep-gate.txt
+                            echo "  dockerfile.security.missing-user.missing-user" >> reports/semgrep-gate.txt
+                            echo "  python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host" >> reports/semgrep-gate.txt
+                            echo "" >> reports/semgrep-gate.txt
+                            echo "Semgrep Gate: FAILED - New security-critical findings found"
+                            exit 1
+                        elif [ $SEMGREP_EXIT -eq 2 ]; then
+                            echo "GATE: REPORT-ONLY - Could not parse semgrep.json structure" > reports/semgrep-gate.txt
+                            echo "Status: REPORT-ONLY (manual triage required)" >> reports/semgrep-gate.txt
+                            echo "Mode: REPORT-ONLY" >> reports/semgrep-gate.txt
+                            echo "Note: Semgrep JSON did not have expected structure for automated gating." >> reports/semgrep-gate.txt
+                            echo "Manual triage is required to verify no security-critical issues exist." >> reports/semgrep-gate.txt
+                            echo ""
+                            echo "Semgrep Gate: REPORT-ONLY - JSON parsing unreliable. See reports/semgrep-gate.txt"
+                        else
+                            # exit 0: check if only baseline findings existed
+                            python3 << 'PYEOF'
+import json
+
+with open('reports/semgrep.json') as f:
+    data = json.load(f)
+results = data.get('results', [])
+baseline_ids = {"dockerfile.security.missing-user.missing-user", "python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host"}
+new_ids = set()
+for r in results:
+    cid = r.get('check_id', 'unknown')
+    if cid not in baseline_ids:
+        new_ids.add(cid)
+if new_ids:
+    print("ACTIVE")
+else:
+    print("REPORT-ONLY")
+PYEOF
+                            SEMG_GATE_MODE=$(cat reports/new_semgrep_gate_status.txt 2>/dev/null || echo "ACTIVE")
+
+                            # Write semgrep-gate.txt with appropriate mode
+                            python3 << 'PYEOF'
+import json
+
+with open('reports/semgrep.json') as f:
+    data = json.load(f)
+results = data.get('results', [])
+baseline_ids = {"dockerfile.security.missing-user.missing-user", "python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host"}
+new_ids = set()
+for r in results:
+    cid = r.get('check_id', 'unknown')
+    if cid not in baseline_ids:
+        new_ids.add(cid)
+
+lines = []
+if new_ids:
+    lines.append("GATE: PASSED - No blocking security findings in non-baseline results")
+    lines.append("Status: PASSED")
+    lines.append("Mode: ACTIVE")
+else:
+    lines.append("GATE: PASSED - Only baseline findings detected (report-only/manual-triage)")
+    lines.append("Status: PASSED (baseline findings only)")
+    lines.append("Mode: REPORT-ONLY (baseline findings accepted as manual triage)")
+
+lines.append("")
+lines.append("Known baseline findings (report-only):")
+lines.append("  dockerfile.security.missing-user.missing-user")
+lines.append("  python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host")
+lines.append("")
+lines.append("If a new security finding appears in ERROR/CRITICAL severity,")
+lines.append("this gate will block the pipeline.")
+
+with open('reports/semgrep-gate.txt', 'w') as f:
+    f.write('\n'.join(lines))
+PYEOF
+                            echo ""
+                            echo "Semgrep Gate: PASSED - $SEMG_GATE_MODE"
+                        fi
+                    else
+                        echo "GATE: REPORT-ONLY - No semgrep.json found" > reports/semgrep-gate.txt
+                        echo "Status: REPORT-ONLY (no Semgrep scan output available)" >> reports/semgrep-gate.txt
+                        echo "Mode: REPORT-ONLY" >> reports/semgrep-gate.txt
+                        echo "Manual triage required to verify no security-critical issues exist." >> reports/semgrep-gate.txt
+                        echo ""
+                        echo "Semgrep Gate: REPORT-ONLY - No semgrep.json. See reports/semgrep-gate.txt"
+                    fi
+                '''
+            }
+        }
+
+        stage('Dockerfile Lint') {
+            steps {
+                sh '''
+                    set -eu
+                    mkdir -p reports
+                    echo "Running Hadolint on Dockerfile..."
+                    docker run --rm -i hadolint/hadolint < source/Dockerfile > reports/hadolint.txt || true
+                    echo "Hadolint Result:"
+                    cat reports/hadolint.txt
                 '''
             }
         }

@@ -44,6 +44,7 @@ trivy_critical_status="NOT SCANNED"
 source_secret_scan_status="NOT SCANNED"
 source_secret_gate_status="NOT CHECKED"
 semgrep_gate_status="NOT CHECKED"
+semgrep_gate_mode="NOT CHECKED"
 dockerhub_status="NOT PUSHED"
 ansible_status="NOT DEPLOYED"
 nonroot_status="NOT VERIFIED"
@@ -58,6 +59,10 @@ app_endpoint_status="UNKNOWN"
 [ -f "${REPORTS_DIR}/source-secret-scan.txt" ]     && source_secret_scan_status="PASS"
 [ -f "${REPORTS_DIR}/source-secret-gate.txt" ]     && source_secret_gate_status="$(head -1 "${REPORTS_DIR}/source-secret-gate.txt" 2>/dev/null)"
 [ -f "${REPORTS_DIR}/semgrep-gate.txt" ]           && semgrep_gate_status="$(head -1 "${REPORTS_DIR}/semgrep-gate.txt" 2>/dev/null)"
+    if [ -f "${REPORTS_DIR}/semgrep-gate.txt" ]; then
+        SEMG_MODE_LINE="$(grep '^Mode:' "${REPORTS_DIR}/semgrep-gate.txt" 2>/dev/null || echo "UNKNOWN")"
+        semgrep_gate_mode="${SEMG_MODE_LINE#Mode: }"
+    fi
 
 # -----------------------------------------------
 # Generate security-summary.txt
@@ -86,6 +91,7 @@ Source Secret:     ${source_secret_scan_status}
 --- Security Gates ---------------------
 Source Secret Gate:  ${source_secret_gate_status}
 Semgrep Gate:        ${semgrep_gate_status}
+Semgrep Gate Mode:   ${semgrep_gate_mode}
 
 --- Pipeline Status --------------------
 Push DockerHub:    ${dockerhub_status}
@@ -121,7 +127,8 @@ cat > "${REPORTS_DIR}/security-summary.json" <<-EOJSON
   },
   "gates": {
     "source_secret_gate": "${source_secret_gate_status}",
-    "semgrep_gate": "${semgrep_gate_status}"
+    "semgrep_gate": "${semgrep_gate_status}",
+    "semgrep_gate_mode": "${semgrep_gate_mode}"
   },
   "pipeline": {
     "push_dockerhub": "${dockerhub_status}",
