@@ -178,6 +178,82 @@ if [ "${SLACK_STATUS}" = "CREDENTIALS_FOUND" ]; then
     fi
 fi
 
+# ===============================================
+# Send detailed per-tool notifications to Telegram
+# ===============================================
+if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
+
+    ## Block A — Hadolint (Dockerfile Lint)
+    HADOLINT_MSG=""
+    HADOLINT_MSG="${HADOLINT_MSG}🔍 Hadolint (Dockerfile Lint)${NL}"
+    if [ -f "${REPORTS_DIR}/hadolint.txt" ]; then
+        HADOLINT_COUNT="$(grep -cve '^\s*$' "${REPORTS_DIR}/hadolint.txt" || echo 0)"
+        if [ "${HADOLINT_COUNT}" -gt 0 ]; then
+            HADOLINT_MSG="${HADOLINT_MSG}Status: WARNINGS FOUND${NL}"
+            HADOLINT_MSG="${HADOLINT_MSG}Findings: ${HADOLINT_COUNT} warnings${NL}"
+        else
+            HADOLINT_MSG="${HADOLINT_MSG}Status: PASS${NL}"
+            HADOLINT_MSG="${HADOLINT_MSG}Findings: 0${NL}"
+        fi
+    else
+        HADOLINT_MSG="${HADOLINT_MSG}Status: NOT RUN${NL}"
+        HADOLINT_MSG="${HADOLINT_MSG}Findings: N/A${NL}"
+    fi
+    HADOLINT_MSG="${HADOLINT_MSG}Build: #${BUILD_NUMBER} | Service: ${SERVICE}${NL}"
+
+    curl -s -X POST \
+        "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        -d "chat_id=${TELEGRAM_CHAT_ID}" \
+        -d "text=${HADOLINT_MSG}" \
+        -d "parse_mode=HTML" > /dev/null 2>&1 || true
+    echo "[SEND] Hadolint notification sent to Telegram."
+
+    ## Block B — Semgrep SAST
+    SEMGREP_MSG=""
+    SEMGREP_MSG="${SEMGREP_MSG}🔬 Semgrep SAST${NL}"
+    if [ -f "${REPORTS_DIR}/semgrep-gate.txt" ]; then
+        SEMGREP_GATE_VAL="$(head -1 "${REPORTS_DIR}/semgrep-gate.txt" 2>/dev/null || echo 'UNKNOWN')"
+        SEMGREP_MSG="${SEMGREP_MSG}Gate: ${SEMGREP_GATE_VAL}${NL}"
+    else
+        SEMGREP_MSG="${SEMGREP_MSG}Gate: NOT RUN${NL}"
+    fi
+    if [ -f "${REPORTS_DIR}/semgrep.txt" ]; then
+        SEMGREP_FINDINGS="$(grep -cve '^\s*$' "${REPORTS_DIR}/semgrep.txt" || echo 0)"
+        SEMGREP_MSG="${SEMGREP_MSG}Findings: ${SEMGREP_FINDINGS} total${NL}"
+    else
+        SEMGREP_MSG="${SEMGREP_MSG}Findings: N/A${NL}"
+    fi
+    SEMGREP_MSG="${SEMGREP_MSG}Build: #${BUILD_NUMBER} | Service: ${SERVICE}${NL}"
+
+    curl -s -X POST \
+        "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        -d "chat_id=${TELEGRAM_CHAT_ID}" \
+        -d "text=${SEMGREP_MSG}" \
+        -d "parse_mode=HTML" > /dev/null 2>&1 || true
+    echo "[SEND] Semgrep notification sent to Telegram."
+
+    ## Block C — Non-root container verification
+    NONROOT_MSG=""
+    NONROOT_MSG="${NONROOT_MSG}🛡️ Non-root Container${NL}"
+    if [ -f "${REPORTS_DIR}/non-root-proof.txt" ]; then
+        NONROOT_USER="$(head -1 "${REPORTS_DIR}/non-root-proof.txt" 2>/dev/null || echo 'unknown')"
+        NONROOT_MSG="${NONROOT_MSG}Status: VERIFIED${NL}"
+        NONROOT_MSG="${NONROOT_MSG}User: ${NONROOT_USER}${NL}"
+    else
+        NONROOT_MSG="${NONROOT_MSG}Status: NOT VERIFIED${NL}"
+        NONROOT_MSG="${NONROOT_MSG}User: N/A${NL}"
+    fi
+    NONROOT_MSG="${NONROOT_MSG}Build: #${BUILD_NUMBER} | Service: ${SERVICE}${NL}"
+
+    curl -s -X POST \
+        "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        -d "chat_id=${TELEGRAM_CHAT_ID}" \
+        -d "text=${NONROOT_MSG}" \
+        -d "parse_mode=HTML" > /dev/null 2>&1 || true
+    echo "[SEND] Non-root container notification sent to Telegram."
+
+fi
+
 set -e
 
 # -----------------------------------------------
