@@ -491,6 +491,64 @@ PYEOF
             }
         }
 
+        stage('Gate: Malware Check') {
+            steps {
+                sh '''
+                    set -eu
+                    echo "========================================"
+                    echo "  Gate A: Trivy Malware Check (block push)"
+                    echo "========================================"
+
+                    if [ ! -f reports/trivy-critical.json ]; then
+                        echo "GATE BLOCKED: Trivy critical report missing. Cannot verify image safety."
+                        exit 1
+                    fi
+
+                    python3 << 'PYEOF'
+import json, sys
+
+with open('reports/trivy-critical.json') as f:
+    data = json.load(f)
+
+results = data.get('Results', [])
+malware_found = []
+
+for r in results:
+    vulns = r.get('Vulnerabilities', [])
+    for v in vulns:
+        vuln_id = v.get('VulnerabilityID', '').upper()
+        title = (v.get('Title', '') or '').lower()
+        is_malware = False
+        if 'MALWARE' in vuln_id or 'BACKDOOR' in vuln_id:
+            is_malware = True
+        if 'malware' in title or 'backdoor' in title:
+            is_malware = True
+        if 'malicious' in title or 'trojan' in title:
+            is_malware = True
+        if is_malware:
+            malware_found.append(v)
+
+if malware_found:
+    print("MALWARE DETECTED in Docker image:")
+    for m in malware_found:
+        vid = m.get('VulnerabilityID', '?')
+        t = (m.get('Title', '') or '?')[:100]
+        pkg = m.get('PkgName', '?')
+        ver = m.get('InstalledVersion', '?')
+        print(f"  {vid} - {t}")
+        print(f"    Package: {pkg}@{ver}")
+    print("")
+    print("GATE BLOCKED: Trivy detected malicious packages. Push aborted.")
+    sys.exit(1)
+else:
+    print("No malware detected in Docker image.")
+    print("Gate PASSED.")
+    sys.exit(0)
+PYEOF
+                '''
+            }
+        }
+
         stage('Push DockerHub') {
             steps {
                 withCredentials([usernamePassword(
@@ -504,6 +562,46 @@ PYEOF
                         docker push "${DOCKER_IMAGE_NAME}:${BUILD_NUMBER}"
                     '''
                 }
+            }
+        }
+
+        stage('Gate: Security Gate Check') {
+            steps {
+                sh '''
+                    set -eu
+                    echo "========================================"
+                    echo "  Gate B: Security Gate Check (block deploy)"
+                    echo "========================================"
+
+                    # Check source-secret-gate
+                    if [ -f reports/source-secret-gate.txt ]; then
+                        if grep -q "GATE: BLOCKED" reports/source-secret-gate.txt; then
+                            echo "DEPLOY BLOCKED: Source secret leak detected."
+                            echo "See reports/source-secret-gate.txt for details."
+                            exit 1
+                        fi
+                        echo "Source Secret Gate: PASSED"
+                    else
+                        echo "DEPLOY BLOCKED: reports/source-secret-gate.txt not found. Cannot verify source security."
+                        exit 1
+                    fi
+
+                    # Check semgrep-gate
+                    if [ -f reports/semgrep-gate.txt ]; then
+                        if grep -q "GATE: BLOCKED" reports/semgrep-gate.txt; then
+                            echo "DEPLOY BLOCKED: SAST critical finding detected."
+                            echo "See reports/semgrep-gate.txt for details."
+                            exit 1
+                        fi
+                        echo "Semgrep Gate: PASSED"
+                    else
+                        echo "DEPLOY BLOCKED: reports/semgrep-gate.txt not found. Cannot verify SAST security."
+                        exit 1
+                    fi
+
+                    echo ""
+                    echo "All deploy gates PASSED. Proceeding with deployment."
+                '''
             }
         }
 
